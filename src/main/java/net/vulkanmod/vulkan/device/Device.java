@@ -18,13 +18,13 @@ import static org.lwjgl.vulkan.VK11.*;
 public class Device {
     final VkPhysicalDevice physicalDevice;
     final VkPhysicalDeviceProperties2 properties;
-    final VkPhysicalDeviceVulkan11Properties vk11Properties;
     final VkPhysicalDeviceMultiDrawPropertiesEXT multiDrawPropertiesEXT;
+    // Only available when VK_KHR_driver_properties is supported (core in 1.2), null otherwise
     final VkPhysicalDeviceDriverProperties driverProperties;
     final VkExtensionProperties.Buffer extensionProperties;
     public final VkPhysicalDeviceFeatures2 availableFeatures;
-    public final VkPhysicalDeviceVulkan11Features availableFeatures11;
-    public final VkPhysicalDeviceVulkan12Features availableFeatures12;
+    // VkPhysicalDeviceVulkan11Features is Vulkan 1.2+, so query the 1.1 feature struct directly
+    public final VkPhysicalDeviceShaderDrawParametersFeatures availableShaderDrawParameters;
 
     private final int vendorId;
     public final String vendorIdString;
@@ -32,33 +32,44 @@ public class Device {
     public final String driverVersion;
     public final String vkVersion;
     public final int deviceType;
+    public final int apiVersion;
 
     private boolean drawIndirectSupported;
     private boolean directMultiDrawSupported;
+    private final boolean samplerFilterMinmaxSupported;
 
     public Device(VkPhysicalDevice physicalDevice) {
         this.physicalDevice = physicalDevice;
 
-//        this.properties = VkPhysicalDeviceProperties.malloc();
-//        vkGetPhysicalDeviceProperties(physicalDevice, properties);
-//
-//        this.vk11Properties = VkPhysicalDeviceVulkan11Properties.calloc();
-//        vkGetPhysicalDeviceProperties2();
-
         this.extensionProperties = getAvailableExtension(physicalDevice);
 
         this.properties = VkPhysicalDeviceProperties2.calloc().sType$Default();
-        this.vk11Properties = VkPhysicalDeviceVulkan11Properties.calloc().sType$Default();
-        this.driverProperties = VkPhysicalDeviceDriverProperties.calloc().sType$Default();
         this.multiDrawPropertiesEXT = VkPhysicalDeviceMultiDrawPropertiesEXT.calloc().sType$Default();
-        this.properties.pNext(this.driverProperties);
-        this.properties.pNext(this.vk11Properties);
-        if (this.hasExtension("VK_EXT_multi_draw")) {
-            this.properties.pNext(this.multiDrawPropertiesEXT);
-            this.directMultiDrawSupported = true;
+
+        // Build the pNext chain properly (calling pNext() repeatedly would overwrite the previous link)
+        long pNextChain = 0L;
+        if (this.hasExtension("VK_KHR_driver_properties")) {
+            this.driverProperties = VkPhysicalDeviceDriverProperties.calloc().sType$Default();
+            this.driverProperties.pNext(pNextChain);
+            pNextChain = this.driverProperties.address();
+        } else {
+            this.driverProperties = null;
         }
 
-        VK12.vkGetPhysicalDeviceProperties2(physicalDevice, this.properties);
+        if (this.hasExtension("VK_EXT_multi_draw")) {
+            this.multiDrawPropertiesEXT.pNext(pNextChain);
+            pNextChain = this.multiDrawPropertiesEXT.address();
+            this.directMultiDrawSupported = true;
+        }
+        this.properties.pNext(pNextChain);
+
+        // The core *2 queries only exist on Vulkan 1.1+ devices; for a 1.0 device (which gets rejected
+        // as unsuitable later) fall back to the base query so that the device can still be listed.
+        vkGetPhysicalDeviceProperties(physicalDevice, this.properties.properties());
+        if (VK_VERSION_MAJOR(this.properties.properties().apiVersion()) > 1
+                || VK_VERSION_MINOR(this.properties.properties().apiVersion()) >= 1) {
+            vkGetPhysicalDeviceProperties2(physicalDevice, this.properties);
+        }
 
         this.vendorId = properties.properties().vendorID();
         this.vendorIdString = decodeVendor(properties.properties().vendorID());
@@ -66,18 +77,25 @@ public class Device {
         this.driverVersion = decodeDvrVersion(properties.properties().driverVersion(), properties.properties().vendorID());
         this.vkVersion = decDefVersion(properties.properties().apiVersion());
         this.deviceType = properties.properties().deviceType();
+        this.apiVersion = properties.properties().apiVersion();
 
         this.availableFeatures = VkPhysicalDeviceFeatures2.calloc().sType$Default();
 
-        this.availableFeatures11 = VkPhysicalDeviceVulkan11Features.malloc().sType$Default();
-        this.availableFeatures.pNext(this.availableFeatures11);
+        this.availableShaderDrawParameters = VkPhysicalDeviceShaderDrawParametersFeatures.calloc().sType$Default();
+        this.availableFeatures.pNext(this.availableShaderDrawParameters);
 
-        this.availableFeatures12 = VkPhysicalDeviceVulkan12Features.malloc().sType$Default();
-        this.availableFeatures.pNext(this.availableFeatures12);
+        if (this.supportsVulkan11()) {
+            vkGetPhysicalDeviceFeatures2(this.physicalDevice, this.availableFeatures);
+        } else {
+            vkGetPhysicalDeviceFeatures(this.physicalDevice, this.availableFeatures.features());
+        }
 
-        vkGetPhysicalDeviceFeatures2(this.physicalDevice, this.availableFeatures);
+        // Sampler min/max reduction: VK_EXT_sampler_filter_minmax on 1.1 (core in 1.2)
+        this.samplerFilterMinmaxSupported = this.hasExtension("VK_EXT_sampler_filter_minmax")
+                || (VK_VERSION_MAJOR(this.apiVersion) == 1 && VK_VERSION_MINOR(this.apiVersion) >= 2)
+                || VK_VERSION_MAJOR(this.apiVersion) > 1;
 
-        if (this.availableFeatures.features().multiDrawIndirect() && this.availableFeatures11.shaderDrawParameters())
+        if (this.availableFeatures.features().multiDrawIndirect() && this.availableShaderDrawParameters.shaderDrawParameters())
             this.drawIndirectSupported = true;
 
     }
@@ -112,6 +130,14 @@ public class Device {
         return drawIndirectSupported;
     }
 
+    public boolean hasSamplerFilterMinmax() {
+        return samplerFilterMinmaxSupported;
+    }
+
+    public boolean supportsVulkan11() {
+        return VK_VERSION_MAJOR(apiVersion) > 1 || VK_VERSION_MINOR(apiVersion) >= 1;
+    }
+
     public boolean hasDirectMultiDraw() {
         return directMultiDrawSupported;
     }
@@ -134,15 +160,15 @@ public class Device {
         return this.properties.properties();
     }
 
-    public VkPhysicalDeviceVulkan11Properties getVk11Properties() {
-        return vk11Properties;
-    }
-
     public VkPhysicalDeviceMultiDrawPropertiesEXT getMultiDrawPropertiesEXT() {
         return multiDrawPropertiesEXT;
     }
 
     public String driverInfo() {
+        if (this.driverProperties == null) {
+            return this.vkVersion;
+        }
+
         return String.format(
                 Locale.ROOT, "%s %s %s", this.vkVersion, this.driverProperties.driverNameString(), this.driverProperties.driverInfoString()
         );
