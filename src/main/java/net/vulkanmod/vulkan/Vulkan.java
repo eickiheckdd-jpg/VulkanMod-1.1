@@ -41,14 +41,12 @@ import static org.lwjgl.util.vma.Vma.vmaDestroyAllocator;
 import static org.lwjgl.vulkan.EXTDebugUtils.*;
 import static org.lwjgl.vulkan.KHRPortabilityEnumeration.VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
 import static org.lwjgl.vulkan.VK10.*;
-import static org.lwjgl.vulkan.VK12.VK_API_VERSION_1_2;
+import static org.lwjgl.vulkan.VK11.VK_API_VERSION_1_1;
 
 public class Vulkan {
 
         public static final boolean ENABLE_VALIDATION_LAYERS = false;
 //    public static final boolean ENABLE_VALIDATION_LAYERS = true;
-
-    public static final boolean DYNAMIC_RENDERING = true;
 
     public static final Set<String> VALIDATION_LAYERS;
 
@@ -64,9 +62,7 @@ public class Vulkan {
         }
     }
 
-    public static final Set<String> REQUIRED_DEVICE_EXTENSIONS = Set.of(
-            "VK_KHR_dynamic_rendering", "VK_KHR_synchronization2", "VK_KHR_swapchain"
-    );
+    public static final Set<String> REQUIRED_DEVICE_EXTENSIONS = Set.of("VK_KHR_swapchain");
 
     public static long window;
 
@@ -166,7 +162,7 @@ public class Vulkan {
             allocatorCreateInfo.device(DeviceManager.vkDevice);
             allocatorCreateInfo.pVulkanFunctions(vulkanFunctions);
             allocatorCreateInfo.instance(Instance.instance);
-            allocatorCreateInfo.vulkanApiVersion(VK_API_VERSION_1_2);
+            allocatorCreateInfo.vulkanApiVersion(VK_API_VERSION_1_1);
 
             PointerBuffer pAllocator = stack.pointers(VK_NULL_HANDLE);
 
@@ -265,7 +261,7 @@ public class Vulkan {
                 appInfo.applicationVersion(VK_MAKE_VERSION(1, 0, 0));
                 appInfo.pEngineName(stack.UTF8Safe("VulkanMod Engine"));
                 appInfo.engineVersion(VK_MAKE_VERSION(1, 0, 0));
-                appInfo.apiVersion(VK_API_VERSION_1_2);
+                appInfo.apiVersion(VK_API_VERSION_1_1);
 
                 VkInstanceCreateInfo createInfo = VkInstanceCreateInfo.calloc(stack);
 
@@ -496,4 +492,3 @@ public class Vulkan {
         }
     }
 }
-
