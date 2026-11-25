@@ -135,7 +135,9 @@ public class Device {
     }
 
     public boolean supportsVulkan11() {
-        return VK_VERSION_MAJOR(apiVersion) > 1 || VK_VERSION_MINOR(apiVersion) >= 1;
+        int major = VK_VERSION_MAJOR(apiVersion);
+        int minor = VK_VERSION_MINOR(apiVersion);
+        return major > 1 || (major == 1 && minor >= 1);
     }
 
     public boolean hasDirectMultiDraw() {
