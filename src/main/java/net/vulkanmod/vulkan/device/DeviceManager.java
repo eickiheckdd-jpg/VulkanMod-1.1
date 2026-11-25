@@ -15,7 +15,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import static java.util.stream.Collectors.toSet;
 import static net.vulkanmod.vulkan.queue.Queue.findQueueFamilies;
 import static net.vulkanmod.vulkan.util.VUtil.asPointerBuffer;
 import static org.lwjgl.glfw.GLFWVulkan.glfwGetRequiredInstanceExtensions;
@@ -90,9 +89,15 @@ public abstract class DeviceManager {
         availableDevices = getAvailableDevices(instance);
 
         List<Device> devices = new ObjectArrayList<>();
-        for (Device device : availableDevices) {
-            if (isDeviceSuitable(device)) {
-                devices.add(device);
+        for (Device candidate : availableDevices) {
+            String rejectionReason = getDeviceRejectionReason(candidate);
+            if (rejectionReason == null) {
+                devices.add(candidate);
+                Initializer.LOGGER.info("Vulkan device accepted: {} (API {}, driver {})",
+                        candidate.deviceName, candidate.vkVersion, candidate.driverVersion);
+            } else {
+                Initializer.LOGGER.warn("Vulkan device rejected: {} (API {}, driver {}): {}",
+                        candidate.deviceName, candidate.vkVersion, candidate.driverVersion, rejectionReason);
             }
         }
 
@@ -271,28 +276,57 @@ public abstract class DeviceManager {
         return glfwExtensions;
     }
 
-    private static boolean isDeviceSuitable(Device device) {
+    /**
+     * Returns null when the device is suitable, otherwise a readable explanation.
+     * Keep the Vulkan 1.1 check: this port uses Vulkan 1.1 core entry points and must not
+     * try to create a 1.1 device from a physical device that only advertises Vulkan 1.0.
+     */
+    private static String getDeviceRejectionReason(Device device) {
+        List<String> reasons = new ArrayList<>();
+
+        if (!device.supportsVulkan11()) {
+            reasons.add("physical-device API is below Vulkan 1.1 (reported " + device.vkVersion + ")");
+        }
+
+        Set<String> missingExtensions = getMissingRequiredExtensions(device);
+        if (!missingExtensions.isEmpty()) {
+            reasons.add("missing required device extensions " + missingExtensions);
+        }
+
         try (MemoryStack stack = stackPush()) {
-            Queue.QueueFamilyIndices indices = findQueueFamilies(device.physicalDevice);
-
-            VkExtensionProperties.Buffer availableExtensions = device.extensionProperties;
-            boolean extensionsSupported = availableExtensions.stream()
-                                                             .map(VkExtensionProperties::extensionNameString)
-                                                             .collect(toSet())
-                                                             .containsAll(Vulkan.REQUIRED_DEVICE_EXTENSIONS);
-
-            boolean swapChainAdequate = false;
-
-            if (extensionsSupported) {
-                SurfaceProperties surfaceProperties = querySurfaceProperties(device.physicalDevice, stack);
-                swapChainAdequate = surfaceProperties.formats.hasRemaining() && surfaceProperties.presentModes.hasRemaining();
+            try {
+                Queue.QueueFamilyIndices indices = findQueueFamilies(device.physicalDevice);
+                if (!indices.isSuitable()) {
+                    reasons.add("no queue family supports both graphics and presentation");
+                }
+            } catch (RuntimeException e) {
+                reasons.add("queue-family query failed: " + e.getMessage());
             }
 
-            VkPhysicalDeviceFeatures supportedFeatures = device.availableFeatures.features();
-            boolean anisotropicFilterSupported = supportedFeatures.samplerAnisotropy();
-
-            return device.supportsVulkan11() && indices.isSuitable() && extensionsSupported && swapChainAdequate;
+            if (missingExtensions.isEmpty()) {
+                try {
+                    SurfaceProperties surface = querySurfaceProperties(device.physicalDevice, stack);
+                    if (surface.formats == null || !surface.formats.hasRemaining()) {
+                        reasons.add("surface exposes no swapchain formats");
+                    }
+                    if (surface.presentModes == null || !surface.presentModes.hasRemaining()) {
+                        reasons.add("surface exposes no present modes");
+                    }
+                } catch (RuntimeException e) {
+                    reasons.add("surface/swapchain query failed: " + e.getMessage());
+                }
+            }
         }
+
+        return reasons.isEmpty() ? null : String.join("; ", reasons);
+    }
+
+    private static Set<String> getMissingRequiredExtensions(Device device) {
+        Set<String> missing = new HashSet<>(Vulkan.REQUIRED_DEVICE_EXTENSIONS);
+        for (VkExtensionProperties extension : device.extensionProperties) {
+            missing.remove(extension.extensionNameString());
+        }
+        return missing;
     }
 
     public static VkExtensionProperties.Buffer getAvailableExtension(MemoryStack stack, VkPhysicalDevice device) {
@@ -355,14 +389,21 @@ public abstract class DeviceManager {
         for (Device device : availableDevices) {
             stringBuilder.append("\tDevice: %s\n".formatted(device.deviceName));
 
-            stringBuilder.append("\t\tVulkan Version: %s\n".formatted(device.vkVersion));
+            stringBuilder.append("\t\tVulkan API Version: %s (0x%08X)\n".formatted(device.vkVersion, device.apiVersion));
+            stringBuilder.append("\t\tVulkan Driver Version: %s\n".formatted(device.driverVersion));
 
-            stringBuilder.append("\t\t");
-            var unsupportedExtensions = device.getUnsupportedExtensions(Vulkan.REQUIRED_DEVICE_EXTENSIONS);
+            var unsupportedExtensions = getMissingRequiredExtensions(device);
             if (unsupportedExtensions.isEmpty()) {
-                stringBuilder.append("All required extensions are supported\n");
+                stringBuilder.append("\t\tAll required device extensions are supported\n");
             } else {
-                stringBuilder.append("Unsupported extension: %s\n".formatted(unsupportedExtensions));
+                stringBuilder.append("\t\tMissing required device extensions: %s\n".formatted(unsupportedExtensions));
+            }
+
+            String rejectionReason = getDeviceRejectionReason(device);
+            if (rejectionReason == null) {
+                stringBuilder.append("\t\tSuitability: accepted\n");
+            } else {
+                stringBuilder.append("\t\tSuitability: rejected - %s\n".formatted(rejectionReason));
             }
         }
 
