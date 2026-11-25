@@ -167,10 +167,22 @@ public abstract class Queue {
                     }
                 }
 
-                if (transferIndex == -1)
-                    throw new RuntimeException("Failed to find queue family with transfer support");
-
-                indices.transferFamily = transferIndex;
+                if (transferIndex != -1) {
+                    indices.transferFamily = transferIndex;
+                } else if (indices.graphicsFamily != VK_QUEUE_FAMILY_IGNORED) {
+                    // Vulkan guarantees transfer operations on graphics-capable queues,
+                    // even when VK_QUEUE_TRANSFER_BIT is not explicitly reported.
+                    // Some mobile drivers (including certain Turnip configurations) omit
+                    // that redundant flag, so falling back to the graphics queue is valid.
+                    indices.transferFamily = indices.graphicsFamily;
+                    Initializer.LOGGER.info("No explicit transfer queue reported; using graphics queue for transfers");
+                } else if (indices.computeFamily != VK_QUEUE_FAMILY_IGNORED) {
+                    // Compute-capable queues also implicitly support transfer operations.
+                    indices.transferFamily = indices.computeFamily;
+                    Initializer.LOGGER.info("No explicit transfer queue reported; using compute queue for transfers");
+                } else {
+                    throw new RuntimeException("Failed to find a queue family capable of transfer operations");
+                }
             }
 
             if (indices.computeFamily == -1) {
