@@ -163,7 +163,7 @@ public class VkCommandEncoder implements CommandEncoder {
                 VkGlFramebuffer.bindFramebuffer(GL30.GL_FRAMEBUFFER, framebufferId);
                 VkGlFramebuffer.framebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, vkGpuTexture.glId(), 0);
 
-                VkGlFramebuffer.beginRendering(VkGlFramebuffer.getFramebuffer(framebufferId));
+                VkGlFramebuffer.beginRenderPass(VkGlFramebuffer.getFramebuffer(framebufferId));
                 VRenderSystem.setClearColor(ARGB.redFloat(clearColor), ARGB.greenFloat(clearColor), ARGB.blueFloat(clearColor), ARGB.alphaFloat(clearColor));
                 Renderer.clearAttachments(0x4000);
                 Renderer.getInstance().endRenderPass();
