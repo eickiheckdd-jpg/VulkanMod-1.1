@@ -10,8 +10,9 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
-import static org.lwjgl.vulkan.VK11.VK_ATTACHMENT_LOAD_OP_LOAD;
-import static org.lwjgl.vulkan.VK11.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
+import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
 public class VkGlFramebuffer {
     private static int idCounter = 1;
@@ -24,10 +25,10 @@ public class VkGlFramebuffer {
         boundFramebuffer = null;
     }
 
-    public static void beginRendering(VkGlFramebuffer glFramebuffer) {
-        boolean begunRendering = glFramebuffer.beginRendering();
+    public static void beginRenderPass(VkGlFramebuffer glFramebuffer) {
+        boolean started = glFramebuffer.beginRenderPass();
 
-        if (begunRendering) {
+        if (started) {
             Framebuffer framebuffer = glFramebuffer.framebuffer;
             int viewWidth = framebuffer.getWidth();
             int viewHeight = framebuffer.getHeight();
@@ -73,7 +74,7 @@ public class VkGlFramebuffer {
         switch (target) {
             case GL30.GL_DRAW_FRAMEBUFFER, GL30.GL_FRAMEBUFFER -> {
                 if (glFramebuffer.framebuffer != null) {
-                    beginRendering(glFramebuffer);
+                    beginRenderPass(glFramebuffer);
                 }
 
                 boundFramebuffer = glFramebuffer;
@@ -112,7 +113,7 @@ public class VkGlFramebuffer {
 
         boundFramebuffer.setAttachmentTexture(attachment, texture);
         boundFramebuffer.create();
-        VkGlFramebuffer.beginRendering(boundFramebuffer);
+        VkGlFramebuffer.beginRenderPass(boundFramebuffer);
     }
 
     public static void framebufferRenderbuffer(int target, int attachment, int renderbuffertarget, int renderbuffer) {
@@ -121,7 +122,7 @@ public class VkGlFramebuffer {
 
         boundFramebuffer.setAttachmentRenderbuffer(attachment, renderbuffer);
         boundFramebuffer.create();
-        VkGlFramebuffer.beginRendering(boundFramebuffer);
+        VkGlFramebuffer.beginRenderPass(boundFramebuffer);
     }
 
     public static void glBlitFramebuffer(int srcX0, int srcY0, int srcX1, int srcY1, int dstX0, int dstY0, int dstX1,
@@ -157,7 +158,7 @@ public class VkGlFramebuffer {
         this.id = i;
     }
 
-    boolean beginRendering() {
+    boolean beginRenderPass() {
         return Renderer.getInstance().beginRenderPass(this.renderPass, this.framebuffer);
     }
 
@@ -235,7 +236,7 @@ public class VkGlFramebuffer {
 
         if (hasDepthImage) {
             builder.getDepthAttachmentInfo()
-                   .setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_LOAD_OP_LOAD);
+                   .setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
         }
 
         this.renderPass = builder.build();
