@@ -59,10 +59,9 @@ public class SwapChain extends Framebuffer {
             this.depthAttachment = null;
         }
 
-        if (!DYNAMIC_RENDERING) {
-            this.FBO_map.forEach((pass, framebuffers) -> Arrays.stream(framebuffers).forEach(id -> vkDestroyFramebuffer(getVkDevice(), id, null)));
-            this.FBO_map.clear();
-        }
+        this.FBO_map.forEach((pass, framebuffers) ->
+                Arrays.stream(framebuffers).forEach(id -> vkDestroyFramebuffer(Vulkan.getVkDevice(), id, null)));
+        this.FBO_map.clear();
 
         createSwapChain();
     }
@@ -173,29 +172,36 @@ public class SwapChain extends Framebuffer {
     }
 
     private long[] createFramebuffers(RenderPass renderPass) {
-
         try (MemoryStack stack = MemoryStack.stackPush()) {
-
             long[] framebuffers = new long[this.swapChainImages.size()];
 
             for (int i = 0; i < this.swapChainImages.size(); ++i) {
-                LongBuffer attachments = stack.longs(this.swapChainImages.get(i).getImageView(), this.depthAttachment.getImageView());
-
-                LongBuffer pFramebuffer = stack.mallocLong(1);
-
-                VkFramebufferCreateInfo framebufferInfo = VkFramebufferCreateInfo.calloc(stack);
-                framebufferInfo.sType(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
-                framebufferInfo.renderPass(renderPass.getId());
-                framebufferInfo.width(this.width);
-                framebufferInfo.height(this.height);
-                framebufferInfo.layers(1);
-                framebufferInfo.pAttachments(attachments);
-
-                if (vkCreateFramebuffer(Vulkan.getVkDevice(), framebufferInfo, null, pFramebuffer) != VK_SUCCESS) {
-                    throw new RuntimeException("Failed to create framebuffer");
+                LongBuffer attachments = stack.mallocLong(renderPass.getAttachmentCount());
+                if (renderPass.hasColorAttachment()) {
+                    attachments.put(this.swapChainImages.get(i).getImageView());
                 }
+                if (renderPass.hasDepthAttachment()) {
+                    if (this.depthAttachment == null) {
+                        throw new IllegalStateException("Swapchain render pass requires a depth attachment");
+                    }
+                    attachments.put(this.depthAttachment.getImageView());
+                }
+                attachments.flip();
 
-                framebuffers[i] = pFramebuffer.get(0);
+                LongBuffer framebufferHandle = stack.mallocLong(1);
+                VkFramebufferCreateInfo framebufferInfo = VkFramebufferCreateInfo.calloc(stack);
+                framebufferInfo.sType$Default()
+                        .renderPass(renderPass.getId())
+                        .width(this.width)
+                        .height(this.height)
+                        .layers(1)
+                        .pAttachments(attachments);
+
+                Vulkan.checkResult(
+                        vkCreateFramebuffer(Vulkan.getVkDevice(), framebufferInfo, null, framebufferHandle),
+                        "Failed to create swapchain framebuffer"
+                );
+                framebuffers[i] = framebufferHandle.get(0);
             }
 
             return framebuffers;
@@ -210,17 +216,16 @@ public class SwapChain extends Framebuffer {
 
     @Override
     protected long getFramebufferId(RenderPass renderPass) {
-        long[] framebuffers = this.FBO_map.computeIfAbsent(renderPass.id, renderPass1 -> createFramebuffers(renderPass));
+        long[] framebuffers = this.FBO_map.computeIfAbsent(renderPass.getId(), renderPass1 -> createFramebuffers(renderPass));
         return framebuffers[Renderer.getCurrentImage()];
     }
 
     public void cleanUp() {
         VkDevice device = Vulkan.getVkDevice();
 
-        if (!DYNAMIC_RENDERING) {
-            this.FBO_map.forEach((pass, framebuffers) -> Arrays.stream(framebuffers).forEach(id -> vkDestroyFramebuffer(getVkDevice(), id, null)));
-            this.FBO_map.clear();
-        }
+        this.FBO_map.forEach((pass, framebuffers) ->
+                Arrays.stream(framebuffers).forEach(id -> vkDestroyFramebuffer(Vulkan.getVkDevice(), id, null)));
+        this.FBO_map.clear();
 
         vkDestroySwapchainKHR(device, this.swapChainId, null);
         this.swapChainImages.forEach(image -> vkDestroyImageView(device, image.getImageView(), null));
