@@ -9,7 +9,6 @@ import net.vulkanmod.interfaces.VertexFormatMixed;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.device.DeviceManager;
-import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.*;
@@ -44,9 +43,10 @@ public class GraphicsPipeline extends Pipeline {
 
         createShaderModules(builder);
 
-        if (builder.renderPass != null)
-            graphicsPipelines.computeIfAbsent(PipelineState.DEFAULT,
-                    this::createGraphicsPipeline);
+        if (builder.renderPass != null) {
+            PipelineState initialState = PipelineState.getCurrentPipelineState(builder.renderPass);
+            graphicsPipelines.computeIfAbsent(initialState, this::createGraphicsPipeline);
+        }
 
         createDescriptorSets(Renderer.getFramesNum());
 
@@ -140,28 +140,33 @@ public class GraphicsPipeline extends Pipeline {
 
             // ===> COLOR BLENDING <===
 
-            VkPipelineColorBlendAttachmentState.Buffer colorBlendAttachment = VkPipelineColorBlendAttachmentState.calloc(1, stack);
-            colorBlendAttachment.colorWriteMask(state.colorMask_i);
-
-            if (PipelineState.BlendState.enable(state.blendState_i)) {
-                colorBlendAttachment.blendEnable(true);
-                colorBlendAttachment.srcColorBlendFactor(PipelineState.BlendState.getSrcRgbFactor(state.blendState_i));
-                colorBlendAttachment.dstColorBlendFactor(PipelineState.BlendState.getDstRgbFactor(state.blendState_i));
-                colorBlendAttachment.colorBlendOp(PipelineState.BlendState.blendOp(state.blendState_i));
-                colorBlendAttachment.srcAlphaBlendFactor(PipelineState.BlendState.getSrcAlphaFactor(state.blendState_i));
-                colorBlendAttachment.dstAlphaBlendFactor(PipelineState.BlendState.getDstAlphaFactor(state.blendState_i));
-                colorBlendAttachment.alphaBlendOp(PipelineState.BlendState.blendOp(state.blendState_i));
-            }
-            else {
-                colorBlendAttachment.blendEnable(false);
-            }
-
             VkPipelineColorBlendStateCreateInfo colorBlending = VkPipelineColorBlendStateCreateInfo.calloc(stack);
             colorBlending.sType(VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO);
             colorBlending.logicOpEnable(PipelineState.LogicOpState.enable(state.logicOp_i));
             colorBlending.logicOp(PipelineState.LogicOpState.decodeFun(state.logicOp_i));
-            colorBlending.pAttachments(colorBlendAttachment);
             colorBlending.blendConstants(stack.floats(0.0f, 0.0f, 0.0f, 0.0f));
+
+            if (state.renderPass != null && state.renderPass.hasColorAttachment()) {
+                VkPipelineColorBlendAttachmentState.Buffer colorBlendAttachment =
+                        VkPipelineColorBlendAttachmentState.calloc(1, stack);
+                colorBlendAttachment.colorWriteMask(state.colorMask_i);
+
+                if (PipelineState.BlendState.enable(state.blendState_i)) {
+                    colorBlendAttachment.blendEnable(true);
+                    colorBlendAttachment.srcColorBlendFactor(PipelineState.BlendState.getSrcRgbFactor(state.blendState_i));
+                    colorBlendAttachment.dstColorBlendFactor(PipelineState.BlendState.getDstRgbFactor(state.blendState_i));
+                    colorBlendAttachment.colorBlendOp(PipelineState.BlendState.blendOp(state.blendState_i));
+                    colorBlendAttachment.srcAlphaBlendFactor(PipelineState.BlendState.getSrcAlphaFactor(state.blendState_i));
+                    colorBlendAttachment.dstAlphaBlendFactor(PipelineState.BlendState.getDstAlphaFactor(state.blendState_i));
+                    colorBlendAttachment.alphaBlendOp(PipelineState.BlendState.blendOp(state.blendState_i));
+                } else {
+                    colorBlendAttachment.blendEnable(false);
+                }
+
+                colorBlending.pAttachments(colorBlendAttachment);
+            } else {
+                colorBlending.attachmentCount(0);
+            }
 
             // ===> DYNAMIC STATES <===
 
@@ -193,26 +198,13 @@ public class GraphicsPipeline extends Pipeline {
             pipelineInfo.basePipelineHandle(VK_NULL_HANDLE);
             pipelineInfo.basePipelineIndex(-1);
 
-            if (!Vulkan.DYNAMIC_RENDERING) {
-                pipelineInfo.renderPass(state.renderPass.getId());
-                pipelineInfo.subpass(0);
+            if (state.renderPass == null) {
+                throw new IllegalStateException(
+                        "Cannot create graphics pipeline '" + this.name + "' without an active classic render pass"
+                );
             }
-            else {
-                //dyn-rendering
-                VkPipelineRenderingCreateInfoKHR renderingInfo = VkPipelineRenderingCreateInfoKHR.calloc(stack);
-                renderingInfo.sType(KHRDynamicRendering.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR);
-
-                Framebuffer framebuffer;
-                if (state.renderPass != null) {
-                    framebuffer = state.renderPass.getFramebuffer();
-                } else {
-                    framebuffer = Renderer.getInstance().getMainPass().getMainFramebuffer();
-                }
-
-                renderingInfo.pColorAttachmentFormats(stack.ints(framebuffer.getFormat()));
-                renderingInfo.depthAttachmentFormat(framebuffer.getDepthFormat());
-                pipelineInfo.pNext(renderingInfo);
-            }
+            pipelineInfo.renderPass(state.renderPass.getId());
+            pipelineInfo.subpass(0);
 
             LongBuffer pGraphicsPipeline = stack.mallocLong(1);
 
