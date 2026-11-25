@@ -12,7 +12,6 @@ import org.lwjgl.vulkan.*;
 import java.nio.LongBuffer;
 import java.util.Arrays;
 
-import static net.vulkanmod.vulkan.Vulkan.DYNAMIC_RENDERING;
 import static org.lwjgl.vulkan.VK10.*;
 
 public class Framebuffer {
@@ -51,6 +50,7 @@ public class Framebuffer {
         this.depthLinearFiltering = builder.depthLinearFiltering;
         this.hasColorAttachment = builder.hasColorAttachment;
         this.hasDepthAttachment = builder.hasDepthAttachment;
+        this.attachmentCount = (this.hasColorAttachment ? 1 : 0) + (this.hasDepthAttachment ? 1 : 0);
 
         if (builder.createImages)
             this.createImages();
@@ -82,7 +82,6 @@ public class Framebuffer {
                                               .setClamp(true)
                                               .createVulkanImage();
 
-            this.attachmentCount++;
         }
     }
 
@@ -97,44 +96,44 @@ public class Framebuffer {
 
     private long createFramebuffer(RenderPass renderPass) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer attachments = stack.mallocLong(renderPass.getAttachmentCount());
 
-            LongBuffer attachments;
-            if (colorAttachment != null && depthAttachment != null) {
-                attachments = stack.longs(colorAttachment.getImageView(), depthAttachment.getImageView());
-            } else if (colorAttachment != null) {
-                attachments = stack.longs(colorAttachment.getImageView());
-            } else {
-                throw new IllegalStateException();
+            if (renderPass.hasColorAttachment()) {
+                if (colorAttachment == null) {
+                    throw new IllegalStateException("Render pass requires a color attachment, but framebuffer '" + name + "' has none");
+                }
+                attachments.put(getColorAttachmentView());
             }
+            if (renderPass.hasDepthAttachment()) {
+                if (depthAttachment == null) {
+                    throw new IllegalStateException("Render pass requires a depth attachment, but framebuffer '" + name + "' has none");
+                }
+                attachments.put(depthAttachment.getImageView());
+            }
+            attachments.flip();
 
-            LongBuffer pFramebuffer = stack.mallocLong(1);
-
+            LongBuffer framebufferHandle = stack.mallocLong(1);
             VkFramebufferCreateInfo framebufferInfo = VkFramebufferCreateInfo.calloc(stack);
-            framebufferInfo.sType$Default();
-            framebufferInfo.renderPass(renderPass.getId());
-            framebufferInfo.width(this.width);
-            framebufferInfo.height(this.height);
-            framebufferInfo.layers(1);
-            framebufferInfo.pAttachments(attachments);
+            framebufferInfo.sType$Default()
+                    .renderPass(renderPass.getId())
+                    .width(this.width)
+                    .height(this.height)
+                    .layers(1)
+                    .pAttachments(attachments);
 
-            if (VK10.vkCreateFramebuffer(Vulkan.getVkDevice(), framebufferInfo, null, pFramebuffer) != VK_SUCCESS) {
-                throw new RuntimeException("Failed to create framebuffer");
-            }
-
-            return pFramebuffer.get(0);
+            Vulkan.checkResult(
+                    vkCreateFramebuffer(Vulkan.getVkDevice(), framebufferInfo, null, framebufferHandle),
+                    "Failed to create framebuffer for '" + name + "'"
+            );
+            return framebufferHandle.get(0);
         }
     }
 
     public void beginRenderPass(VkCommandBuffer commandBuffer, RenderPass renderPass, MemoryStack stack) {
         renderPass.setFramebuffer(this);
 
-        if (!DYNAMIC_RENDERING) {
-            long framebufferId = this.getFramebufferId(renderPass);
-            renderPass.beginRenderPass(commandBuffer, framebufferId, stack);
-        }
-        else {
-            renderPass.beginDynamicRendering(commandBuffer, stack);
-        }
+        long framebufferId = this.getFramebufferId(renderPass);
+        renderPass.beginRenderPass(commandBuffer, framebufferId, stack);
     }
 
     protected long getFramebufferId(RenderPass renderPass) {
