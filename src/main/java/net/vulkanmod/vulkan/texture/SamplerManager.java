@@ -102,7 +102,7 @@ public abstract class SamplerManager {
             samplerInfo.mipLodBias(0.0F);
 
             // Reduction Mode
-            if (sampler.hasReductionMode()) {
+            if (sampler.hasReductionMode() && DeviceManager.device.hasSamplerFilterMinmax()) {
                 VkSamplerReductionModeCreateInfo reductionModeInfo = VkSamplerReductionModeCreateInfo.calloc(stack);
                 reductionModeInfo.sType$Default();
                 reductionModeInfo.reductionMode(sampler.getReductionMode());
